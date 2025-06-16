@@ -1,25 +1,25 @@
+const express = require('express');
 const nodemailer = require('nodemailer');
 const dns = require('dns').promises;
-const readline = require('readline');
+const path = require('path');
 
-// Create readline interface
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
+const app = express();
+const PORT = 3000;
 
-// Prompt user for email
-rl.question('Enter the recipient email address: ', async (toEmail) => {
-  rl.close();
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
 
-  if (!/^[^@]+@[^@]+\.[^@]+$/.test(toEmail)) {
-    console.error('Invalid email format.');
-    process.exit(1);
+// Route for form submission
+app.post('/send', async (req, res) => {
+  const { from, to, message } = req.body;
+
+  // Validate emails
+  if (![from, to].every(email => /^[^@]+@[^@]+\.[^@]+$/.test(email))) {
+    return res.status(400).send('Invalid email format.');
   }
 
-  const domain = toEmail.split('@')[1];
+  const domain = to.split('@')[1];
 
-  // Get MX record for the recipient's domain
   async function getMX(domain) {
     try {
       const records = await dns.resolveMx(domain);
@@ -27,37 +27,39 @@ rl.question('Enter the recipient email address: ', async (toEmail) => {
       return records[0].exchange;
     } catch (err) {
       console.error(`Failed to get MX record for ${domain}:`, err);
-      process.exit(1);
+      return null;
     }
   }
 
-  // Send the email
-  async function sendEmailDirect() {
-    const mxHost = await getMX(domain);
+  const mxHost = await getMX(domain);
+  if (!mxHost) return res.status(500).send('Could not resolve recipient mail server.');
 
-    const transporter = nodemailer.createTransport({
-      host: mxHost,
-      port: 25,
-      secure: false,
-      tls: {
-        rejectUnauthorized: false
-      }
-    });
-
-    const mailOptions = {
-      from: 'main@gmail.com',
-      to: toEmail,
-      subject: 'Direct Email Test',
-      text: 'Hello! This email was sent directly to your mail server without using a third-party SMTP.',
-    };
-
-    try {
-      const info = await transporter.sendMail(mailOptions);
-      console.log('Email sent:', info.response);
-    } catch (err) {
-      console.error('Send failed:', err);
+  const transporter = nodemailer.createTransport({
+    host: mxHost,
+    port: 25,
+    secure: false,
+    tls: {
+      rejectUnauthorized: false
     }
-  }
+  });
 
-  await sendEmailDirect();
+  const mailOptions = {
+    from,
+    to,
+    subject: 'Direct Email',
+    text: message
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    res.send(`Email sent successfully: ${info.response}`);
+  } catch (err) {
+    console.error('Send failed:', err);
+    res.status(500).send(`Failed to send email: ${err.message}`);
+  }
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
 });
